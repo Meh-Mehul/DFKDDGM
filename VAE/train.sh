@@ -1,0 +1,1 @@
+nohup python3 train_tvae.py > log.txt 2>&1 & 
