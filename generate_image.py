@@ -7,22 +7,22 @@ from SD.models import setup_accelerator_and_logging, load_models_and_tokenizer \
                         , prepare_uncond_embeddings
 from SD.helper import generate_class_prompts, precompute_text_embeddings
 from VAE.train_tvae import VAE
-save_syn_data_path = "./synthetic_data/"  
-batch_size_generation = 1 ## Batch size while synthesis
-inference_nums = 5 ## Steps for inference of SD
-guided_scale = 3 ## Hyperparameter for CFG
-## Weights for the three losses
-oh = 1
-bn = 0
-adv = 0
-class_per_num_start = 10
+# save_syn_data_path = "./synthetic_data/"  
+# batch_size_generation = 1 ## Batch size while synthesis
+# inference_nums = 5 ## Steps for inference of SD
+# guided_scale = 3 ## Hyperparameter for CFG
+# ## Weights for the three losses
+# oh = 1
+# bn = 0
+# adv = 0
+# class_per_num_start = 10
 
 def generate_images(accelerator, class_index, class_text_embeddings, uncond_embeddings, noise_scheduler, vae, unet, model,
-                      generator, weight_dtype, syn_image_seed):
+                      generator, weight_dtype, syn_image_seed, config):
     """
     Generate synthetic images for a single class with adversarial training.
     """
-    image_save_dir_path = os.path.join(save_syn_data_path, str(class_index))
+    image_save_dir_path = os.path.join(config.save_syn_data_path, str(class_index))
     os.makedirs(image_save_dir_path, exist_ok=True)
     
     text_embeddings = class_text_embeddings[class_index]    
@@ -31,7 +31,7 @@ def generate_images(accelerator, class_index, class_text_embeddings, uncond_embe
     set_seed(syn_image_seed)
     torch.cuda.empty_cache()
     with accelerator.accumulate(unet):
-        latents_shape = (batch_size_generation, unet.config.in_channels, 64, 64)
+        latents_shape = (config.batch_size_generation, unet.config.in_channels, 64, 64)
         latents = torch.randn(
             latents_shape,
             generator=generator,
@@ -39,7 +39,7 @@ def generate_images(accelerator, class_index, class_text_embeddings, uncond_embe
             dtype=weight_dtype
         ).to(unet.device)
         latents = latents * noise_scheduler.init_noise_sigma
-        noise_scheduler.set_timesteps(inference_nums)
+        noise_scheduler.set_timesteps(config.inference_nums)
         timesteps_tensor = noise_scheduler.timesteps.to(latents.device)
         timestep_nums = 0
 
@@ -54,7 +54,7 @@ def generate_images(accelerator, class_index, class_text_embeddings, uncond_embe
 
             model_preds = unet(latent_model_input, timesteps, input_embeddings).sample.half()
             uncond_pred, text_pred = model_preds.chunk(2)
-            model_pred = uncond_pred + guided_scale * (text_pred - uncond_pred)
+            model_pred = uncond_pred + config.guided_scale * (text_pred - uncond_pred)
             # Calculate original latents
             with torch.no_grad():
                 ori_latents = noise_scheduler.step(
@@ -75,7 +75,7 @@ def generate_images(accelerator, class_index, class_text_embeddings, uncond_embe
             loss_m = torch.tensor(0.0, device=unet.device)
             loss_kl = torch.tensor(0.0, device=unet.device)
 
-            if (oh + bn + adv) > 0:
+            if (config.m + config.kl) > 0:
                 # inputs_aug = transform(image)
                 # output = model(inputs_aug)
                 # Calculate BatchNorm loss
@@ -110,8 +110,8 @@ def generate_images(accelerator, class_index, class_text_embeddings, uncond_embe
                     cond_grad = torch.zeros_like(latents)
                 latents = latents - cond_grad
                 # Save intermediate images
-                if (timestep_nums + 1) % (inference_nums // 5) == 0 and (timestep_nums + 1) != inference_nums:
-                    for i in range(batch_size_generation):
+                if (timestep_nums + 1) % (config.inference_nums // 5) == 0 and (timestep_nums + 1) != config.inference_nums:
+                    for i in range(config.batch_size_generation):
                         image_name = os.path.join(
                             image_save_dir_path,
                             f"{syn_image_seed}_{class_index}_s:{timesteps.item():.0f}_m:{loss_m.item():.3f}_kl:{loss_kl.item():.3f}_{i}.jpg"
@@ -119,8 +119,8 @@ def generate_images(accelerator, class_index, class_text_embeddings, uncond_embe
                         torchvision.utils.save_image(image[i], image_name)
             else:
                 # Save intermediate images without loss
-                if (timestep_nums + 1) % (inference_nums // 5) == 0 and (timestep_nums + 1) != inference_nums:
-                    for i in range(batch_size_generation):
+                if (timestep_nums + 1) % (config.inference_nums // 5) == 0 and (timestep_nums + 1) != config.inference_nums:
+                    for i in range(config.batch_size_generation):
                         image_name = os.path.join(
                             image_save_dir_path,
                             f"{syn_image_seed}_{class_index}_s:{timesteps.item():.0f}_bn:0.0_oh:0.0_adv:0.0_{i}.jpg"
@@ -140,7 +140,7 @@ def generate_images(accelerator, class_index, class_text_embeddings, uncond_embe
                 latent_model_input = torch.cat([latents] * 2)
                 model_preds = unet(latent_model_input, timesteps, input_embeddings).sample.half()
                 uncond_pred, text_pred = model_preds.chunk(2)
-                model_pred = uncond_pred + guided_scale * (text_pred - uncond_pred)
+                model_pred = uncond_pred + config.guided_scale * (text_pred - uncond_pred)
                 # Update latents
                 latents = noise_scheduler.step(
                     model_pred,
@@ -166,7 +166,7 @@ def generate_images(accelerator, class_index, class_text_embeddings, uncond_embe
             input_latents = 1 / 0.18215 * ori_latents.detach()
             image = vae.decode(input_latents).sample
             image = (image / 2 + 0.5).clamp(0, 1)
-            for i in range(batch_size_generation):
+            for i in range(config.batch_size_generation):
                 image_name = os.path.join(
                     image_save_dir_path,
                     f"{syn_image_seed}_{class_index}_m:{loss_m.item():.3f}_kl:{loss_kl.item():.3f}_{i}.jpg"
