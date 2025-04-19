@@ -182,9 +182,28 @@ def load_teacher_model(trained_dgm_path):
     return model
 
 
+class Config:
+    def __init__(self):
+        self.seed = 5000
+        self.name = "synthetic_images"
+        self.save_syn_data_path = "./synthetic_data" 
+        self.checkpoints_dir = "./checkpoints" 
+        self.generate_nums = 100  
+        self.batch_size_generation = 1
+        self.STABLE_DIFFUSION = "runwayml/stable-diffusion-v1-5"  # Model name from HF
+        self.SD_REVISION = None  # Revision
+        self.inference_nums = 5  # Number of inference steps
+        self.guided_scale = 3  # Guidance scale for classifier-free guidance
+        # Loss weights
+        self.m = 1.0  # Weight for MSE loss
+        self.kl = 1.0  # Weight for KL divergence loss
+        # Teacher model settings
+        self.trained_dgm_path = "./vae_model.pth" 
+        # Dataset and prompts
+        self.label_name = True
+        self.data_type = "cifar10" 
 
-
-def main(config:dict):
+def main(config:Config):
     """
     Main pipeline for adversarial image generation and model training.
     """
@@ -220,3 +239,9 @@ def main(config:dict):
     accelerator.wait_for_everyone()
     accelerator.end_training()
     # print(f"Final Best Accuracy: {best_acc:.2f}")
+
+if __name__ == "__main__":
+    config = Config()
+    main(config)
+
+    
