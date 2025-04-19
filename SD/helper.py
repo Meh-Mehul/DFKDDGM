@@ -1,4 +1,4 @@
-import tqdm
+from tqdm import tqdm
 IMAGENET1K_DICT={0: 'tench, Tinca tinca',
  1: 'goldfish, Carassius auratus',
  2: 'great white shark, white shark, man-eater, man-eating shark, Carcharodon carcharias',

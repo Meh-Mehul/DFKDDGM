@@ -1,6 +1,7 @@
 import torch
 from SD.models import set_seed
-import torchvision, tqdm
+import torchvision
+from tqdm import tqdm
 import os
 import torch.nn.functional as F
 from SD.models import setup_accelerator_and_logging, load_models_and_tokenizer \
@@ -91,9 +92,14 @@ def generate_images(accelerator, class_index, class_text_embeddings, uncond_embe
 
                 # loss = oh * loss_oh + bn * loss_bn + adv * loss_adv
 
-                ## Get the model (T_VAE's) reconstruction and then calculate KL loss and reconstruction error (MSE) add to loss
+                ## Get the model (T_VAE's) reconstruction and then calculate KL loss and reconstruction error (MSE) add to 
+                # Ensure the input image matches the model's precision
+                # image = image.to(dtype=model.encoder[0].weight.dtype)
+                image = F.interpolate(image, size=(32, 32), mode='bilinear', align_corners=False)
                 h = model.encoder(image) 
-                h = h.view(h.size(0), -1)
+                h = h.view(h.size(0), -1) 
+                assert h.size(1) == model.hidden_to_miu.in_features, \
+                    f"Shape mismatch: expected {model.hidden_to_miu.in_features}, got {h.size(1)}"
                 miu = model.hidden_to_miu(h)
                 sigma = model.hidden_to_sigma(h) 
                 z = miu + torch.randn_like(sigma) * sigma 
@@ -101,7 +107,8 @@ def generate_images(accelerator, class_index, class_text_embeddings, uncond_embe
                 h = h.view(h.size(0), 256, 4, 4)  
                 recon_image = model.decoder(h) 
                 recon_image = recon_image.squeeze(0)
-                loss_m = F.mse_loss(recon_image, image, reduction="none")
+                recon_image = recon_image.unsqueeze(0)  
+                loss_m = F.mse_loss(recon_image, image, reduction="sum")
                 loss_kl = -0.5 * torch.sum(1 + sigma - miu.pow(2) - sigma.exp()) 
                 loss = loss_m + loss_kl
                 # Backpropagate loss
@@ -171,7 +178,8 @@ def generate_images(accelerator, class_index, class_text_embeddings, uncond_embe
                     image_save_dir_path,
                     f"{syn_image_seed}_{class_index}_m:{loss_m.item():.3f}_kl:{loss_kl.item():.3f}_{i}.jpg"
                 )
-                torchvision.utils.save_image(image[i], image_name)
+                resized = F.interpolate(image[i].unsqueeze(0), size=(32, 32), mode="bilinear", align_corners=False).squeeze(0)
+                torchvision.utils.save_image(resized, image_name)
     return syn_image_seed
 
 
@@ -184,7 +192,7 @@ def load_teacher_model(trained_dgm_path):
 
 class Config:
     def __init__(self):
-        self.seed = 5000
+        self.SEED = 5000
         self.name = "synthetic_images"
         self.save_syn_data_path = "./synthetic_data" 
         self.checkpoints_dir = "./checkpoints" 
@@ -212,6 +220,8 @@ def main(config:Config):
     uncond_embeddings = prepare_uncond_embeddings(tokenizer, text_encoder, unet, config.batch_size_generation)
     # model, model_s, hooks, transform = load_classification_models(args, accelerator)
     model = load_teacher_model(config.trained_dgm_path)
+    model = model.to('cuda')
+    model = model.half() ## To get it to torch.cuda.HalfTensor
     class_prompts = generate_class_prompts(config.label_name, config.data_type)
     class_text_embeddings, class_syn_nums = precompute_text_embeddings(class_prompts, tokenizer, text_encoder, unet,config.batch_size_generation)
     # Create output directories
@@ -219,12 +229,12 @@ def main(config:Config):
     os.makedirs(config.save_syn_data_path, exist_ok=True)
     config.train_data_path = config.save_syn_data_path
     os.makedirs(config.checkpoints_dir, exist_ok=True)
-    syn_image_seed = config.seed
+    syn_image_seed = config.SEED
     # best_acc = -1.0
     for class_per_num in tqdm(range(int(config.generate_nums))):
         for class_index in range(len(class_prompts)):
             syn_image_seed = generate_images(accelerator, class_index, class_text_embeddings, uncond_embeddings, noise_scheduler, vae,
-                                                unet, model, generator, weight_dtype, syn_image_seed)
+                                                unet, model, generator, weight_dtype, syn_image_seed, config)
         # Train and evaluate every 10 generations
         # if (class_per_num + 1) % 10 == 0:
         #     train_dataset, test_dataset = get_dataset(args)
