@@ -1,1 +1,1 @@
-nohup python3 generate_image.py
+nohup python3 generate_image.py > log.txt 2>&1 & 
