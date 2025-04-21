@@ -70,47 +70,22 @@ def generate_images(accelerator, class_index, class_text_embeddings, uncond_embe
             image = (image / 2 + 0.5).clamp(0, 1)
 
             loss = 0.0
-            # loss_oh = torch.tensor(0.0, device=unet.device)
-            # loss_bn = torch.tensor(0.0, device=unet.device)
-            # loss_adv = torch.tensor(0.0, device=unet.device)
             loss_m = torch.tensor(0.0, device=unet.device)
             loss_kl = torch.tensor(0.0, device=unet.device)
 
             if (config.m + config.kl) > 0:
-                # inputs_aug = transform(image)
-                # output = model(inputs_aug)
-                # Calculate BatchNorm loss
-                # loss_bn = sum([h.r_feature for h in hooks])
-                # Calculate one-hot loss
-                # target = torch.full((batch_size_generation,), class_index, device=unet.device, dtype=torch.long)
-                # loss_oh = F.cross_entropy(output, target)
-                # Calculate adversarial loss
-                # if adv > 0 and class_per_num_start <= class_per_num:
-                #     s_out = model_s(inputs_aug)
-                #     mask = (s_out.argmax(1) == output.argmax(1)).float()
-                #     loss_adv = -(kldiv(s_out, output.detach(), reduction='none').sum(1) * mask).mean()
-
-                # loss = oh * loss_oh + bn * loss_bn + adv * loss_adv
-
-                ## Get the model (T_VAE's) reconstruction and then calculate KL loss and reconstruction error (MSE) add to 
-                # Ensure the input image matches the model's precision
-                # image = image.to(dtype=model.encoder[0].weight.dtype)
                 image = F.interpolate(image, size=(32, 32), mode='bilinear', align_corners=False)
-                h = model.encoder(image) 
-                h = h.view(h.size(0), -1) 
-                assert h.size(1) == model.hidden_to_miu.in_features, \
-                    f"Shape mismatch: expected {model.hidden_to_miu.in_features}, got {h.size(1)}"
-                miu = model.hidden_to_miu(h)
-                sigma = model.hidden_to_sigma(h) 
-                z = miu + torch.randn_like(sigma) * sigma 
-                h = model.latent_to_hidden(z) 
-                h = h.view(h.size(0), 256, 4, 4)  
-                recon_image = model.decoder(h) 
+                recon_image, miu, sigma = model(image)
                 recon_image = recon_image.squeeze(0)
-                recon_image = recon_image.unsqueeze(0)  
+                recon_image = recon_image.unsqueeze(0)
                 loss_m = F.mse_loss(recon_image, image, reduction="sum")
-                loss_kl = -0.5 * torch.sum(1 + sigma - miu.pow(2) - sigma.exp()) 
-                loss = loss_m + loss_kl
+                # loss_kl = -0.5 * torch.sum(1 + sigma - miu.pow(2) - sigma.exp()) 
+                sigma = F.softplus(sigma)
+                loss_kl = -0.5 * torch.sum(1 + torch.log(sigma ** 2 + 1e-8) - miu.pow(2) - sigma.pow(2))
+                # loss_kl_forward = 0.5 * torch.sum(torch.log(sigma) + (1 + miu.pow(2)) / sigma.exp() - 1)
+                # loss_kl = loss_kl_forward
+                # print("Pred mean: ", miu, " Pred sig: ", sigma, "losskl: ", loss_kl)
+                loss = loss_m*config.m + loss_kl*config.kl 
                 # Backpropagate loss
                 cond_grad = torch.autograd.grad(loss, latents, allow_unused=True, retain_graph=True)[0]
                 if cond_grad is None:
