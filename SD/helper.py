@@ -1055,7 +1055,33 @@ PROMPT_DICT = {
         #                 'couch', 'cow', 'crab', 'crayon', 'crocodile', 'crown', 'cruise ship', 'cup', 'diamond', 'dishwasher']
         # },
 
+    "celeba": {
+        "template": "an image of template*",
+        "label_name": [
+            "a single human face, close up portrait, realistic, photorealistic, studio lighting, high detail",
+            "a single male celebrity face, close up portrait, realistic, photorealistic, studio lighting, high detail",
+            "a single female celebrity face, close up portrait, realistic, photorealistic, studio lighting, high detail",
+            "a single human face, headshot, professional photo, natural lighting, sharp focus",
+            "a single male celebrity face, headshot, professional photo, natural lighting, sharp focus",
+            "a single female celebrity face, headshot, professional photo, natural lighting, sharp focus",
+            "a single human face, smiling, close up, clear skin, detailed eyes",
+            "a single male celebrity face, smiling, close up, clear skin, detailed eyes",
+            "a single female celebrity face, smiling, close up, clear skin, detailed eyes",
+            "a single human face, serious expression, portrait, studio background",
+            "a single male celebrity face, serious expression, portrait, studio background",
+            "a single female celebrity face, serious expression, portrait, studio background",
+            "a single human face, with long hair, facing forward, soft light",
+            "a single male celebrity face, with short hair, looking at the camera, dramatic lighting",
+            "a single female celebrity face, with makeup, glamorous look",
+            "a single human face, side profile, sharp features",
+            "a single male celebrity face, with a beard, confident pose",
+            "a single female celebrity face, with glasses, intellectual look"
+            # // Add more variations combining attributes and styles here
+        ]
+    }
 }
+
+
 def generate_class_prompts(label_name, data_type):
     """
     Generate class prompts based on dataset type.

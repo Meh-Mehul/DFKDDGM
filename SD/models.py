@@ -60,7 +60,7 @@ def load_models_and_tokenizer(accelerator, STABLE_DIFFUSION, SD_REVISION, SEED):
     )
     text_encoder = text_encoder_cls.from_pretrained(
         STABLE_DIFFUSION,
-        subfolder="text_encoder",
+        subfolder="text_encoder", 
         revision=SD_REVISION,
         torch_dtype=torch.float16
     )
@@ -126,7 +126,7 @@ def setup_accelerator_and_logging(SEED):
     if SEED is not None:
         set_seed(SEED)
     if accelerator.is_main_process:
-        accelerator.init_trackers("dreambooth", config=vars())
+        accelerator.init_trackers("dreambooth")
     return accelerator
 
 def prepare_uncond_embeddings(tokenizer, text_encoder, unet, batch_size_generation):

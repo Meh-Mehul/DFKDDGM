@@ -1,0 +1,10 @@
+/usr/lib/python3/dist-packages/requests/__init__.py:87: RequestsDependencyWarning: urllib3 (2.4.0) or chardet (4.0.0) doesn't match a supported version!
+  warnings.warn("urllib3 ({}) or chardet ({}) doesn't match a supported "
+[2025-04-28 01:10:39,526] [INFO] [real_accelerator.py:239:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+/home/teaching/.local/lib/python3.10/site-packages/matplotlib/projections/__init__.py:63: UserWarning: Unable to import Axes3D. This may be due to multiple versions of Matplotlib being installed (e.g. as a system package and as a pip package). As a result, the 3D projection is not available.
+  warnings.warn("Unable to import Axes3D. This may be due to multiple versions of "
+You are using a model of type clip_text_model to instantiate a model of type . This is not supported for all configurations of models and can yield errors.
+/home/teaching/.local/lib/python3.10/site-packages/transformers/models/clip/feature_extraction_clip.py:28: FutureWarning: The class CLIPFeatureExtractor is deprecated and will be removed in version 5 of Transformers. Please use CLIPImageProcessor instead.
+  warnings.warn(
+  0%|          | 0/18 [00:00<?, ?it/s] 67%|██████▋   | 12/18 [00:00<00:00, 118.94it/s]100%|██████████| 18/18 [00:00<00:00, 120.32it/s]
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [08:30<00:00, 510.78s/it]100%|██████████| 1/1 [08:30<00:00, 510.78s/it]
