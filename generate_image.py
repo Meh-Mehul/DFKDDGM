@@ -222,7 +222,7 @@ class Config:
         self.guided_scale = 0.3 # Guidance scale for classifier-free guidance
         # Loss weights
         self.m = 2.0  # Weight for MSE loss
-        self.kl = 1.0  # Weight for KL divergence loss
+        self.kl = -5.0  # Weight for KL divergence loss
         # Teacher model settings
         # self.trained_dgm_path = "./VAE/vae_model.pth" 
         self.trained_dgm_path = "./CelebaVAE/vae_model.pt"
@@ -230,7 +230,215 @@ class Config:
         self.label_name = True
         # self.data_type = "cifar10" 
         self.data_type = "celeba"
+        self.skip_val = 3
+def generate_images_WIP(accelerator, class_index, class_text_embeddings, uncond_embeddings, noise_scheduler, vae, unet, model,
+                      generator, weight_dtype, syn_image_seed, config):
+    """
+    Generate synthetic images for a single class with DGM's Guidance and Walk-in-park style algorithm.
+    """
+    image_save_dir_path = os.path.join(config.save_syn_data_path, str(class_index))
+    os.makedirs(image_save_dir_path, exist_ok=True)
+    
+    text_embeddings = class_text_embeddings[class_index]    
+    syn_image_seed += 1
+    generator.manual_seed(syn_image_seed)
+    set_seed(syn_image_seed)
+    torch.cuda.empty_cache()
+    with accelerator.accumulate(unet):
+        latents_shape = (config.batch_size_generation, unet.config.in_channels, 64, 64)
+        latents = torch.randn(
+            latents_shape,
+            generator=generator,
+            device="cpu",
+            dtype=weight_dtype
+        ).to(unet.device)
+        latents = latents * noise_scheduler.init_noise_sigma
+        noise_scheduler.set_timesteps(config.inference_nums)
+        timesteps_tensor = noise_scheduler.timesteps.to(latents.device)
+        timestep_nums = 0
+        for timesteps in timesteps_tensor[:-1]:
+            if(timesteps%config.skip_val in [1, 2]):
+                ## For now, every config.skip_val'th multiple of inference , we skip guidance from DGM, so as to increase image quality
+                text_embeddings.requires_grad_(True)
+                uncond_embeddings.requires_grad_(True)
+                latents.requires_grad_(True)
+                input_embeddings = torch.cat([uncond_embeddings, text_embeddings], dim=0)
+                latent_model_input = torch.cat([latents] * 2)
+                # with torch.no_grad(): 
+                noise_pred = unet(latent_model_input, timesteps, input_embeddings).sample.half()
+                uncond_noise_pred, text_noise_pred = noise_pred.chunk(2)
+                guided_noise_pred = (uncond_noise_pred.float()+ config.guided_scale * (text_noise_pred.float() - uncond_noise_pred.float())).requires_grad_()
+                # A formula for DDPM-like schedulers to get pred_original_sample from noise_pred is:
+                # x_0_pred = (x_t - sqrt(1 - alpha_prod_t) * noise_pred) / sqrt(alpha_prod_t)
+                # Where x_t is the current latent (latents), and alpha_prod_t is a term from the scheduler.
+                alpha_prod_t = noise_scheduler.alphas_cumprod[timesteps].to(latents.device)
+                sqrt_alpha_prod_t = alpha_prod_t ** 0.5
+                sqrt_one_minus_alpha_prod_t = (1 - alpha_prod_t) ** 0.5
+                while len(sqrt_alpha_prod_t.shape) < len(latents.shape):
+                    sqrt_alpha_prod_t = sqrt_alpha_prod_t.unsqueeze(-1)
+                while len(sqrt_one_minus_alpha_prod_t.shape) < len(latents.shape):
+                    sqrt_one_minus_alpha_prod_t = sqrt_one_minus_alpha_prod_t.unsqueeze(-1)
+                # Calculate the predicted original sample with gradients enabled
+                pred_original_sample = (latents - sqrt_one_minus_alpha_prod_t * guided_noise_pred) / sqrt_alpha_prod_t
+                input_latents_for_vae = (pred_original_sample / 0.18215).to(vae.dtype)
+                # input_latents_for_vae = input_latents_for_vae.half()
+                # input_latents_for_vae = 1 / 0.18215 * pred_original_sample.detach()
+                image = vae.decode(input_latents_for_vae).sample
+                for i in range(config.batch_size_generation):
+                    image_name = os.path.join(
+                        image_save_dir_path,
+                        f"{syn_image_seed}_{class_index}_s:{timesteps.item():.0f}_skip{timesteps}_{i}.jpg"
+                    )
+                    torchvision.utils.save_image(image[i], image_name)
+                timestep_nums += 1
+            else:
 
+                text_embeddings.requires_grad_(True)
+                uncond_embeddings.requires_grad_(True)
+                latents.requires_grad_(True)
+                input_embeddings = torch.cat([uncond_embeddings, text_embeddings], dim=0)
+                latent_model_input = torch.cat([latents] * 2)
+                # with torch.no_grad(): 
+                noise_pred = unet(latent_model_input, timesteps, input_embeddings).sample.half()
+                uncond_noise_pred, text_noise_pred = noise_pred.chunk(2)
+                guided_noise_pred = (uncond_noise_pred.float()+ config.guided_scale * (text_noise_pred.float() - uncond_noise_pred.float())).requires_grad_()
+                # A formula for DDPM-like schedulers to get pred_original_sample from noise_pred is:
+                # x_0_pred = (x_t - sqrt(1 - alpha_prod_t) * noise_pred) / sqrt(alpha_prod_t)
+                # Where x_t is the current latent (latents), and alpha_prod_t is a term from the scheduler.
+                alpha_prod_t = noise_scheduler.alphas_cumprod[timesteps].to(latents.device)
+                sqrt_alpha_prod_t = alpha_prod_t ** 0.5
+                sqrt_one_minus_alpha_prod_t = (1 - alpha_prod_t) ** 0.5
+                while len(sqrt_alpha_prod_t.shape) < len(latents.shape):
+                    sqrt_alpha_prod_t = sqrt_alpha_prod_t.unsqueeze(-1)
+                while len(sqrt_one_minus_alpha_prod_t.shape) < len(latents.shape):
+                    sqrt_one_minus_alpha_prod_t = sqrt_one_minus_alpha_prod_t.unsqueeze(-1)
+                # Calculate the predicted original sample with gradients enabled
+                pred_original_sample = (latents - sqrt_one_minus_alpha_prod_t * guided_noise_pred) / sqrt_alpha_prod_t
+                input_latents_for_vae = (pred_original_sample / 0.18215).to(vae.dtype)
+                # input_latents_for_vae = input_latents_for_vae.half()
+                # input_latents_for_vae = 1 / 0.18215 * pred_original_sample.detach()
+                image = vae.decode(input_latents_for_vae).sample
+                image = (image / 2 + 0.5).clamp(0, 1)
+                loss = 0.0
+                loss_m = torch.tensor(0.0, device=unet.device)
+                loss_kl = torch.tensor(0.0, device=unet.device)
+                if (config.m>0 or config.kl > 0):
+                    image_smol = image ## For CelebA
+                    ## Get the model (T_VAE's) reconstruction and then calculate KL loss and reconstruction error (MSE) add to loss
+                    recon_image, miu, sigma = model(image_smol)
+                    recon_image = recon_image.squeeze(0)
+                    recon_image = recon_image.unsqueeze(0)
+                    loss_m = F.mse_loss(recon_image, image_smol, reduction="sum")
+                    # sigma = F.softplus(sigma)
+                    loss_kl = 0.5 * torch.sum(1 + torch.log(sigma ** 2 + 1e-8) - miu.pow(2) - sigma.pow(2))
+                    loss = loss_m*config.m + loss_kl*config.kl
+                    ### ==== OLD === LOSS
+                    # # Backpropagate loss with respect to the guided noise prediction
+                    # grad_guided_noise_pred = torch.autograd.grad(loss, guided_noise_pred, allow_unused=True, retain_graph=True)[0]
+                    # if grad_guided_noise_pred is None:
+                    #     print("The grad was zero!", flush=True)
+                    #     grad_guided_noise_pred = torch.zeros_like(guided_noise_pred)
+                    # print("Grad: ", grad_guided_noise_pred)
+                    # # Apply the gradient to the noise prediction
+                    # guided_noise_pred = guided_noise_pred - grad_guided_noise_pred * config.guided_scale
+                    grad_guided = torch.autograd.grad(loss.float(), guided_noise_pred,retain_graph=True, allow_unused=True)[0]
+                    if grad_guided is None:
+                        grad_guided = torch.zeros_like(guided_noise_pred)
+                    # Optionally clamp to avoid huge updates
+                    grad_guided = torch.clamp(grad_guided, -10.0, 10.0)
+                    # Update the guided noise in float32
+                    guided_noise_pred = guided_noise_pred - grad_guided * config.guided_scale
+                    # This step moves from latents at time t to latents at time t-1
+                    with torch.no_grad(): # The step itself doesn't need gradients for the guidance
+                        scheduler_output_step = noise_scheduler.step(
+                            guided_noise_pred,
+                            timesteps.cpu(),
+                            latents,
+                            generator=generator,
+                            return_dict=False # Get the output tensor directly
+                        )
+                        latents = scheduler_output_step[0].half()
+                    # Save intermediate images (using the image calculated before the gradient step for consistency)
+                    for i in range(config.batch_size_generation):
+                        image_name = os.path.join(
+                            image_save_dir_path,
+                            f"{syn_image_seed}_{class_index}_s:{timesteps.item():.0f}_m:{loss_m.item():.3f}_kl:{loss_kl.item():.3f}_{i}.jpg"
+                        )
+                        torchvision.utils.save_image(image[i], image_name)
+                else:
+                    # Original diffusion step without guidance
+                    with torch.no_grad():
+                        model_preds = unet(latent_model_input, timesteps, input_embeddings).sample.half()
+                        uncond_pred, text_pred = model_preds.chunk(2)
+                        model_pred = uncond_pred + config.guided_scale * (text_pred - uncond_pred)
+
+                        scheduler_output_step = noise_scheduler.step(
+                            model_pred,
+                            timesteps.cpu(),
+                            latents,
+                            generator=generator,
+                            return_dict=False
+                        )
+                        latents = scheduler_output_step[0].half()
+
+
+                    # Save intermediate images without loss
+                    if (timestep_nums + 1) % (config.inference_nums // 3) == 0 and (timestep_nums + 1) != config.inference_nums:
+                        for i in range(config.batch_size_generation):
+                            image_name = os.path.join(
+                                image_save_dir_path,
+                                f"{syn_image_seed}_{class_index}_s:{timesteps.item():.0f}_bn:0.0_oh:0.0_adv:0.0_{i}.jpg"
+                            )
+                            torchvision.utils.save_image(image[i], image_name)
+
+                timestep_nums += 1
+
+            with torch.no_grad():
+                # Apply custom augmentation
+                # if customer_aug >= 1 and (timestep_nums % (inference_nums // 5) == 0) and (
+                #         timestep_nums != inference_nums):
+                #     latents, _, _ = customer_aug_data(latents, customer_aug=customer_aug)
+                #     latents = latents.to(dtype=weight_dtype)
+
+                # Predict next latents
+                latent_model_input = torch.cat([latents] * 2)
+                model_preds = unet(latent_model_input, timesteps, input_embeddings).sample.half()
+                uncond_pred, text_pred = model_preds.chunk(2)
+                model_pred = uncond_pred + config.guided_scale * (text_pred - uncond_pred)
+                # Update latents
+                latents = noise_scheduler.step(
+                    model_pred,
+                    timesteps.cpu(),
+                    latents,
+                    generator=generator
+                ).prev_sample.half()
+
+            # Clear gradients
+            unet.zero_grad()
+            vae.zero_grad()
+            model.zero_grad()
+            torch.cuda.empty_cache()
+
+        # Save final images
+        with torch.no_grad():
+            ori_latents = noise_scheduler.step(
+                model_pred,
+                timesteps.cpu(),
+                latents,
+                generator=generator
+            ).pred_original_sample.half()
+            input_latents = 1 / 0.18215 * ori_latents
+            image = vae.decode(input_latents).sample
+            image = (image / 2 + 0.5).clamp(0, 1)
+            for i in range(config.batch_size_generation):
+                image_name = os.path.join(
+                    image_save_dir_path,
+                    f"{syn_image_seed}_{class_index}_m:{loss_m.item():.3f}_kl:{loss_kl.item():.3f}_{i}.jpg"
+                )
+                # resized = F.interpolate(image[i].unsqueeze(0), size=(32, 32), mode="bilinear", align_corners=False).squeeze(0)
+                torchvision.utils.save_image(image[i], image_name)
+                
+    return syn_image_seed
 def main(config:Config):
     """
     Main pipeline for adversarial image generation and model training.
@@ -253,7 +461,7 @@ def main(config:Config):
     # best_acc = -1.0
     for class_per_num in tqdm(range(int(config.generate_nums))):
         for class_index in range(len(class_prompts)):
-            syn_image_seed = generate_images(accelerator, class_index, class_text_embeddings, uncond_embeddings, noise_scheduler, vae,
+            syn_image_seed = generate_images_WIP(accelerator, class_index, class_text_embeddings, uncond_embeddings, noise_scheduler, vae,
                                                 unet, model, generator, weight_dtype, syn_image_seed, config)
         # Train and evaluate every 10 generations
         # if (class_per_num + 1) % 10 == 0:
